@@ -481,11 +481,16 @@ function CustomisableSleepScreen:_installScreensaverHook()
     local css = self
 
     self._screensaver_close_hook = util.wrapMethod(Screensaver, "close", function(ss_self)
+        local was_custom_sleep_screen = G_reader_settings:readSetting("screensaver_type") == "customisable_ss"
         if css._saved_rotation ~= nil then
             Screen:setRotationMode(css._saved_rotation)
             css._saved_rotation = nil
         end
-        return css._screensaver_close_hook:raw_call(ss_self)
+        local ret = css._screensaver_close_hook:raw_call(ss_self)
+        if was_custom_sleep_screen and not UIManager._entered_poweroff_stage then
+            pcall(function() Screen:refreshFull() end)
+        end
+        return ret
     end)
 
     self._screensaver_hook = util.wrapMethod(Screensaver, "show", function(ss_self)
