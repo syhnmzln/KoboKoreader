@@ -30,6 +30,19 @@ package.loaded["customisablesleepscreen/_meta"] = meta
 local PATCH_VERSION = meta.version
 local Screen        = Device.screen
 
+local function flashBlackBeforeSleepScreen()
+    if not config.getSetting("FLASH_BLACK_ON_SLEEP") or not Device:hasEinkScreen() then return end
+
+    local Blitbuffer = require("ffi/blitbuffer")
+    Screen.bb:fill(Blitbuffer.COLOR_BLACK)
+    Screen:refreshFull(0, 0, Screen:getWidth(), Screen:getHeight())
+
+    -- Recent Kobo sunxi kernels need a little extra time between full refreshes.
+    if Device:isKobo() and Device:isSunxi() then
+        require("ffi/util").usleep(150 * 1000)
+    end
+end
+
 local function getReaderUI()
     return package.loaded["apps/reader/readerui"]
 end
@@ -391,6 +404,7 @@ function CustomisableSleepScreen:_onPowerOff()
             padding    = 0,
             widget,
         }
+        flashBlackBeforeSleepScreen()
         wrapped:paintTo(Screen.bb, 0, 0)
         Screen:refreshFull()
         ib.freeTrackedBBs()
@@ -581,6 +595,7 @@ function CustomisableSleepScreen:_installScreensaverHook()
 
         ss_self.screensaver_widget.modal    = true
         ss_self.screensaver_widget.dithered = true
+        flashBlackBeforeSleepScreen()
         UIManager:show(ss_self.screensaver_widget, "full")
 
         local screensaver_delay = G_reader_settings:readSetting("screensaver_delay")

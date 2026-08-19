@@ -24,6 +24,7 @@ local PresetStore  = css_settings.presets()
 local h                = require("css_menu_helpers")
 local getSetting       = h.getSetting
 local createRadioItem  = h.createRadioItem
+local createToggleItem = h.createToggleItem
 local createSpinDialog = h.createSpinDialog
 
 local presets_mod               = require("css_menu_presets")
@@ -108,6 +109,12 @@ local function buildAdvancedMenu()
                 ),
             },
         },
+        createToggleItem(
+            _("Flash black before sleep screen"),
+            _("On e-ink screens, briefly refreshes the display to black before drawing the sleep screen to reduce ghosting."),
+            SETTINGS.FLASH_BLACK_ON_SLEEP,
+            USER_CONFIG.FLASH_BLACK_ON_SLEEP
+        ),
         {
             text      = _("Battery time calculation"),
             help_text = _("Method used to estimate remaining battery life."),

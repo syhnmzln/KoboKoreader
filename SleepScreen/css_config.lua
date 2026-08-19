@@ -3,6 +3,7 @@
 local USER_CONFIG = {
     DARK_MODE                = false,
     MONOCHROME               = false,
+    FLASH_BLACK_ON_SLEEP     = false,
 
     SHOW_BOOK                = true,
     SHOW_CHAP                = true,
@@ -129,6 +130,7 @@ local SETTINGS = {
 
     DARK_MODE                = "customisable_ss_dark_mode",
     MONOCHROME               = "customisable_ss_monochrome",
+    FLASH_BLACK_ON_SLEEP     = "customisable_ss_flash_black_on_sleep",
 
     SHOW_BOOK                = "customisable_ss_show_book",
     SHOW_CHAP                = "customisable_ss_show_chap",

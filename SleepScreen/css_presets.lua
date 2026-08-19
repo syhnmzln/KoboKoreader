@@ -24,6 +24,7 @@ local PRESET_EXCLUDED_KEYS = {
     BATT_MANUAL_RATE       = true,
     EXPORT_PATH            = true,
     EXPORT_ENABLED         = true,
+    FLASH_BLACK_ON_SLEEP   = true,
 }
 
 local function buildPreset(overrides)
