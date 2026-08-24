@@ -1,0 +1,375 @@
+diff --git a/ReadingStats+.lua b/ReadingStats+.lua
+index 5d842803a5551a476aef3c550a24dc587d37bedb..07a7a3b992b5e5cc08d3fc71e41cc40911ca2804 100644
+--- a/ReadingStats+.lua
++++ b/ReadingStats+.lua
+@@ -25,53 +25,54 @@ local LineWidget = require("ui/widget/linewidget")
+ local SQ3 = require("lua-ljsqlite3/init")
+ local Size = require("ui/size")
+ local TextWidget = require("ui/widget/textwidget")
+ local UIManager = require("ui/uimanager")
+ local VerticalGroup = require("ui/widget/verticalgroup")
+ local VerticalSpan = require("ui/widget/verticalspan")
+ local Screen = Device.screen
+ local gettext = require("gettext")
+ local ReaderUI = require("apps/reader/readerui")
+ 
+ local PATCH_L10N = {
+     en = {
+         ["DATE"] = "DATE",
+         ["TIME"] = "TIME",
+         ["PAGES"] = "PAGES",
+         ["SPEED"] = "SPEED",
+         ["DELTA"] = "ΔPROG",
+         ["TOTAL"] = "TOTAL",
+         ["RANGE"] = "RANGE",
+         ["Days Read"] = "days reading",
+         ["reading in this session"] = "reading in this session",
+         ["Book total"] = "Book total",
+         ["Actual reading total"] = "Actual reading total",
+         ["Visible period"] = "Visible period",
+         ["Visible sessions"] = "Visible sessions",
++        ["Daily avg"] = "Daily avg",
+         ["Avg session"] = "Avg session",
+         ["Summary"] = "Summary",
+-        ["pages/h"] = "pages/h",
++        ["pages/h"] = "pg/h",
+         ["days"] = "days",
+         ["No data"] = "No data",
+         ["avg"] = "avg",
+         ["min"] = "min",
+         ["max"] = "max",
+         ["early"] = "early",
+         ["late"] = "late",
+     }
+ }
+ 
+ local function l10nLookup(msg)
+     local lang = "en"
+     if G_reader_settings and G_reader_settings.readSetting then
+         lang = G_reader_settings:readSetting("language") or "en"
+     end
+     local lang_base = lang:match("^([a-z]+)") or lang
+     local map = PATCH_L10N[lang] or PATCH_L10N[lang_base] or PATCH_L10N.en or {}
+     return map[msg]
+ end
+ 
+ local function _(msg)
+     return l10nLookup(msg) or gettext(msg)
+ end
+ 
+ local stats_db_path = DataStorage:getSettingsDir() .. "/statistics.sqlite3"
+@@ -422,107 +423,141 @@ local function getBookTitle(ui)
+ end
+ 
+ local function getBookAuthor(ui)
+     if not ui or not ui.doc_props then return "" end
+     local author = ui.doc_props.display_author or ui.doc_props.authors or ui.doc_props.author or ""
+     if type(author) == "table" then
+         author = table.concat(author, ", ")
+     end
+     return tostring(author)
+ end
+ 
+ local function getTotalDaysRead(book_id)
+     if not book_id then return 0 end
+     local conn = getDB()
+     if not conn then return 0 end
+     local sql = string.format([[
+         SELECT count(DISTINCT date(ps.start_time, 'unixepoch', 'localtime'))
+         FROM page_stat_data ps
+         WHERE ps.id_book = %d;
+     ]], book_id)
+     local result = conn:rowexec(sql)
+     conn:close()
+     return tonumber(result) or 0
+ end
+ 
+-local function getActualReadingTotal(book_id, min_seconds, max_seconds)
++local function getActualReadingTotal(book_id, max_seconds)
+     if not book_id then return 0 end
+-    min_seconds = tonumber(min_seconds) or 5
+     max_seconds = tonumber(max_seconds) or 120
+     local conn = getDB()
+     if not conn then return 0 end
+     local sql = string.format([[
+-        SELECT COALESCE(sum(ps.duration), 0)
+-        FROM page_stat_data ps
+-        WHERE ps.id_book = %d
+-          AND ps.duration BETWEEN %d AND %d;
+-    ]], book_id, min_seconds, max_seconds)
+-    local result = conn:rowexec(sql)
++        SELECT count(*), COALESCE(sum(durations), 0)
++        FROM (
++            SELECT min(sum(duration), %d) AS durations
++            FROM page_stat
++            WHERE id_book = %d
++            GROUP BY page
++        );
++    ]], max_seconds, book_id)
++    local _, result = conn:rowexec(sql)
+     conn:close()
+     return tonumber(result) or 0
+ end
+ 
+ local function sumDuration(stats)
+     local total = 0
+     for _, row in ipairs(stats or {}) do
+         total = total + (tonumber(row.duration) or 0)
+     end
+     return total
+ end
+ 
+ local function sumPages(stats)
+     local total = 0
+     for _, row in ipairs(stats or {}) do
+         total = total + (tonumber(row.pages) or 0)
+     end
+     return total
+ end
+ 
+ local function sumDelta(stats)
+     local total = 0
+     for _, row in ipairs(stats or {}) do
+         total = total + (tonumber(row.delta_progress) or 0)
+     end
+     return total
+ end
+ 
+-local function getAvgSessionMinutes(stats)
++local function getDailyAverageMinutes(stats)
++    local total_time = sumDuration(stats)
++    local total_days = #(stats or {})
++    if total_days == 0 then
++        return "-"
++    end
++    local avg_minutes = (total_time / total_days) / 60
++    return string.format("%.1f %s", avg_minutes, _("min"))
++end
++
++local function getFilteredSessionStatsByDates(session_stats, daily_rows)
++    local allowed_dates = {}
++    for _, row in ipairs(daily_rows or {}) do
++        if row and row.date then
++            allowed_dates[row.date] = true
++        end
++    end
++
++    local filtered = {}
++    for _, session in ipairs(session_stats or {}) do
++        if session and session.date and allowed_dates[session.date] then
++            table.insert(filtered, session)
++        end
++    end
++    return filtered
++end
++
++local function formatAvgSessionLength(stats)
+     local valid_count = 0
+-    local actual_time = 0
++    local total_seconds = 0
+     for _, row in ipairs(stats or {}) do
+         local pages = tonumber(row.pages) or 0
+         local duration = tonumber(row.duration) or 0
+         if pages > 1 and duration >= 60 then
+             valid_count = valid_count + 1
+-            actual_time = actual_time + duration
++            total_seconds = total_seconds + duration
+         end
+     end
+     if valid_count == 0 then
+         return "-"
+     end
+-    local avg_minutes = (actual_time / valid_count) / 60
+-    return string.format("%.1f %s", avg_minutes, _("min"))
++
++    local avg_seconds = total_seconds / valid_count
++    local avg_minutes = avg_seconds / 60
++    if avg_minutes < 60 then
++        return string.format("%.1f %s", avg_minutes, _("min"))
++    end
++    return formatDurationCompact(avg_seconds)
+ end
+ 
+ local function getValidSessionTotals(stats)
+     local total_pages = 0
+     local total_duration = 0
+     local valid_count = 0
+     for _, row in ipairs(stats or {}) do
+         local pages = tonumber(row.pages) or 0
+         local duration = tonumber(row.duration) or 0
+         if pages > 1 and duration >= 60 then
+             valid_count = valid_count + 1
+             total_pages = total_pages + pages
+             total_duration = total_duration + duration
+         end
+     end
+     return total_pages, total_duration, valid_count
+ end
+ 
+ local function fixedCol(widget, width)
+     return LeftContainer:new{
+         dimen = Geom:new{ w = width, h = widget:getSize().h },
+         widget,
+     }
+ end
+ 
+@@ -720,149 +755,146 @@ function ReadingStatsTable:init()
+     self.layout = buildLayout(screen_w, Size.padding.default, Screen:scaleBySize(4))
+     self.dimen = Geom:new{ w = screen_w, h = screen_h }
+     self.stats_plugin = self.ui and self.ui.statistics
+     self:buildContent()
+ 
+     if Device:isTouchDevice() then
+         self.ges_events.TapClose = {
+             GestureRange:new{
+                 ges = "tap",
+                 range = self.dimen,
+             }
+         }
+     end
+     if Device:hasKeys() then
+         self.key_events.AnyKeyPressed = { { Device.input.group.Any } }
+     end
+ end
+ 
+ function ReadingStatsTable:buildContent()
+     if self.stats_plugin then
+         self.stats_plugin:insertDB()
+     end
+ 
+     local book_id = self.stats_plugin and self.stats_plugin.id_curr_book
+     local daily_stats = getDailyStats(book_id, 365)
++    local session_stats = getSessionStats(book_id, 365)
+     local all_stats = daily_stats
+ 
+     local book_title = getBookTitle(self.ui)
+     local book_author = getBookAuthor(self.ui)
+     local days_read = getTotalDaysRead(book_id)
+ 
+     local display_stats = all_stats
+ 
+     local total_rows = #display_stats
+     local total_pages = math.max(1, math.ceil(total_rows / ROWS_PER_PAGE))
+     local has_pagination = total_rows > ROWS_PER_PAGE
+ 
+     if _current_page > total_pages then _current_page = total_pages end
+     if _current_page < 1 then _current_page = 1 end
+ 
+     local page_start = (_current_page - 1) * ROWS_PER_PAGE + 1
+     local page_end   = math.min(page_start + ROWS_PER_PAGE - 1, total_rows)
+     local stats_data = {}
+     for i = page_start, page_end do
+         table.insert(stats_data, display_stats[i])
+     end
+ 
+     local title_main = TextWidget:new{
+         text = wrapTitle(book_title, 28, 2),
+         face = self.fonts.title_main or self.fonts.title or self.fonts.cell,
+     }
+ 
+     local title_author = TextWidget:new{
+         text = book_author or "",
+         face = self.fonts.title_author or self.fonts.title_meta or self.fonts.meta or self.fonts.cell,
+     }
+ 
+     local title_meta = TextWidget:new{
+         text = string.format("%d %s", days_read, _("Days Read")),
+         face = self.fonts.title_meta or self.fonts.meta or self.fonts.cell,
+     }
+ 
+     local title = VerticalGroup:new{
+         align = "left",
+         title_main,
+         VerticalSpan:new{ height = Size.padding.tiny or 2 },
+         title_author,
+         VerticalSpan:new{ height = Size.padding.tiny or 2 },
+         title_meta,
+     }
+ 
+     local title_row = title
+ 
+     local total_book_time = sumDuration(daily_stats)
+-    local actual_book_time = getActualReadingTotal(book_id, 5, 120)
++    local actual_book_time = getActualReadingTotal(book_id, 120)
+     local all_time = sumDuration(all_stats)
+-    local all_pages = sumPages(all_stats)
+     local all_delta = sumDelta(all_stats)
+     local valid_pages_total, valid_duration_total, valid_sessions_total = getValidSessionTotals(all_stats)
+-    local visible_time = sumDuration(stats_data)
+-    local visible_pages = sumPages(stats_data)
+-    local visible_label = _("Visible period")
+     local visible_speed = "-"
+     if valid_sessions_total > 0 and valid_duration_total > 0 then
+         local pph = (valid_pages_total * 3600) / valid_duration_total
+         visible_speed = string.format("%.0f %s", pph, _("pages/h"))
+     end
+-    local avg_session_minutes = getAvgSessionMinutes(all_stats)
+-    local avg_session_minutes = getAvgSessionMinutes(stats_data)
++    local daily_avg_minutes = getDailyAverageMinutes(stats_data)
++    local visible_sessions = getFilteredSessionStatsByDates(session_stats, stats_data)
++    local avg_session_minutes = formatAvgSessionLength(visible_sessions)
+ 
+     local meta1 = TextWidget:new{
+         text = string.format("%s: %s   ·   %s: %s",
+             _("Book total"), formatDurationCompact(total_book_time),
+             _("Actual reading total"), formatDurationCompact(actual_book_time)),
+         face = self.fonts.meta,
+     }
+ 
+     local meta2 = TextWidget:new{
+-        text = string.format("%s: %s   ·   %d p   ·   %s   ·   %s: %s",
+-            visible_label, formatDurationCompact(visible_time), visible_pages, visible_speed,
+-            _("Avg session"), avg_session_minutes),
++        text = string.format("%s: %s   ·   %s: %s   ·   %s",
++            _("Daily avg"), daily_avg_minutes,
++            _("Avg session"), avg_session_minutes, visible_speed),
+         face = self.fonts.meta,
+     }
+ 
+     local session_duration = getCurrentSessionDuration(
+         book_id,
+         self.stats_plugin and self.stats_plugin.start_current_period
+     )
+     if self.stats_plugin and self.stats_plugin.page_start_time then
+         local live_seconds = os.time() - self.stats_plugin.page_start_time
+         if live_seconds > 0 then
+             session_duration = session_duration + live_seconds
+         end
+     end
+ 
+     local session_widget = TextWidget:new{
+         text = string.format("%s %s", formatSeconds(session_duration), _("reading in this session")),
+         face = self.fonts.session or self.fonts.cell,
+     }
+ 
+     local summary_widget = TextWidget:new{
+-        text = string.format("%s: %s · %d p · %s · %s · %s: %s",
+-            _("Summary"), formatProgressDelta(all_delta), all_pages, formatDurationCompact(all_time),
+-            visible_speed, _("Avg session"), avg_session_minutes),
++        text = string.format("%s: %s · %s",
++            _("Summary"), formatProgressDelta(all_delta), formatDurationCompact(all_time)),
+         face = self.fonts.summary,
+     }
+ 
+     local header = buildTableHeader(self.fonts, self.layout)
+     local rows = buildTableRows(stats_data, self.fonts, self.layout)
+ 
+     local table_content = VerticalGroup:new{ align = "left" }
+ 
+     local function makeFrame(widget, pt, pb)
+         return FrameContainer:new{
+             background = Blitbuffer.COLOR_WHITE,
+             bordersize = 0,
+             padding_top = pt,
+             padding_bottom = pb,
+             padding_left = self.layout.padding_h,
+             padding_right = self.layout.padding_h,
+             widget,
+         }
+     end
+ 
+     local title_frame = makeFrame(title_row, Size.padding.default, Size.padding.tiny or 2)
+     local meta1_frame = makeFrame(meta1, 0, Size.padding.tiny or 2)
+     local meta2_frame = makeFrame(meta2, 0, Size.padding.tiny or 2)
+     local session_frame = makeFrame(session_widget, 0, Size.padding.small)
+     local rows_frame = makeFrame(rows, Size.padding.small, Size.padding.small)
