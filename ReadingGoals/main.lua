@@ -805,7 +805,7 @@ function ReadingGoal:_trackGlobalGoal(gdw, curr, book_path)
 end
 
 function ReadingGoal:_checkDailyWeeklyReached()
-    for _, dw in ipairs(self:_getAllActiveDailyWeekly()) do
+    for goal_index, dw in ipairs(self:_getAllActiveDailyWeekly()) do
         local read = self:_getDailyWeeklyRead(dw)
         local effective = dw.target_pages
         local key = dw.mode == "weekly" and self:_getWeekStartDate() or self:_today()
